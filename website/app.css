@@ -1411,3 +1411,17 @@ body {
   font-size: 0.85rem;
   color: var(--text-muted);
 }
+
+/* ── Streaming Cursor ────────────────────────────────────────── */
+.streaming-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--purple-light);
+  font-weight: 700;
+  animation: blinkCursor 0.8s infinite;
+}
+
+@keyframes blinkCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

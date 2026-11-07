@@ -24,21 +24,15 @@
     }, 4000);
   }
 
-  btn.addEventListener("click", function() {
+  btn.addEventListener("click", function(e) {
     btn.disabled = true;
-    btn.innerHTML = '\u23F3 Scanning...';
-    showToast("Scanning page for reels...", "info");
-
-    setTimeout(function() {
-      scrapeAndSync();
-    }, 200);
+    // If Shift was held, do quick visible scrape, otherwise auto-scroll
+    autoScrollAndSync();
   });
 
-  function scrapeAndSync() {
-    var reels = [];
-    var seen = {};
+  function collectReelsFromDom(seen) {
+    var batch = [];
     var anchors = document.querySelectorAll('a[href^="/reel/"], a[href^="/p/"]');
-
     for (var i = 0; i < anchors.length; i++) {
       var a = anchors[i];
       var url = a.href.split("?")[0];
@@ -49,19 +43,53 @@
           seen[shortcode] = true;
           var img = a.querySelector("img");
           var thumbnail = img ? img.src : "";
-          reels.push({ url: url, shortcode: shortcode, thumbnail_url: thumbnail });
+          batch.push({ url: url, shortcode: shortcode, thumbnail_url: thumbnail });
         }
       }
     }
+    return batch;
+  }
 
-    if (reels.length === 0) {
+  async function autoScrollAndSync() {
+    var allReels = [];
+    var seen = {};
+    var rounds = 0;
+    var maxRounds = 12;
+    var idleCount = 0;
+
+    showToast("Collecting reels (Auto-scrolling)...", "info");
+
+    while (rounds < maxRounds && idleCount < 3) {
+      rounds++;
+      var batch = collectReelsFromDom(seen);
+      allReels = allReels.concat(batch);
+
+      btn.innerHTML = '\u23F3 Found ' + allReels.length + ' reels...';
+      showToast('Scanning round ' + rounds + '/' + maxRounds + ' — ' + allReels.length + ' reels found', 'info');
+
+      if (batch.length === 0) {
+        idleCount++;
+      } else {
+        idleCount = 0;
+      }
+
+      window.scrollBy({ top: 1200, behavior: 'smooth' });
+      await new Promise(function(resolve) { setTimeout(resolve, 1100); });
+    }
+
+    if (allReels.length === 0) {
       showToast("No reels found on this page. Scroll to load more, then try again.", "error");
       btn.disabled = false;
       btn.innerHTML = '\uD83C\uDFAC Sync to ReelMind';
       return;
     }
 
-    showToast("Found " + reels.length + " reels. Sending...", "info");
+    sendReelsToServer(allReels);
+  }
+
+  function sendReelsToServer(reels) {
+    showToast("Found " + reels.length + " reels. Sending to ReelMind...", "info");
+    btn.innerHTML = '\u23F3 Sending ' + reels.length + '...';
 
     fetch("http://localhost:8000/api/pipeline/start_from_extension", {
       method: "POST",

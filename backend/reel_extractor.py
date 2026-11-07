@@ -38,7 +38,14 @@ def _get_whisper(model_size: str = "base"):
     global _whisper_model
     if _whisper_model is None:
         import whisper
-        _whisper_model = whisper.load_model(model_size)
+        import torch
+        device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+        try:
+            print(f"[Whisper] Loading model '{model_size}' on {device.upper()}...")
+            _whisper_model = whisper.load_model(model_size, device=device)
+        except Exception as e:
+            print(f"[Whisper] Acceleration fallback to CPU: {e}")
+            _whisper_model = whisper.load_model(model_size, device="cpu")
     return _whisper_model
 
 
@@ -46,7 +53,9 @@ def _get_ocr():
     global _ocr_reader
     if _ocr_reader is None:
         import easyocr
-        _ocr_reader = easyocr.Reader(["en"], verbose=False)
+        import torch
+        use_gpu = torch.cuda.is_available()
+        _ocr_reader = easyocr.Reader(["en"], gpu=use_gpu, verbose=False)
     return _ocr_reader
 
 
@@ -217,6 +226,13 @@ class ReelExtractor:
                 break
             if frame_count % frame_interval == 0:
                 try:
+                    # Optimize OCR: Downscale 1080p+ frames to max height 640px for 4-5x faster OCR
+                    h, w = frame.shape[:2]
+                    if h > 640:
+                        scale = 640.0 / h
+                        new_w = max(1, int(w * scale))
+                        frame = cv2.resize(frame, (new_w, 640), interpolation=cv2.INTER_AREA)
+
                     texts = reader.readtext(frame, detail=0, paragraph=True)
                     all_text.extend(texts)
                 except Exception:

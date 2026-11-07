@@ -226,6 +226,101 @@ class ReelChat:
                 "source_reels": []
             }
 
+    def _get_web_context(self, question: str) -> str:
+        """Extract main entity and query Wikipedia if applicable."""
+        try:
+            extraction_prompt = (
+                "Extract the main entity name (person, company, place) to search Wikipedia. "
+                "Return ONLY the exact entity name, nothing else. If there is no entity, return 'NONE'.\n"
+                f"Query: {question}"
+            )
+            entity = self.llm.invoke(extraction_prompt).strip()
+            if entity and entity.upper() != "NONE":
+                from langchain_community.tools import WikipediaQueryRun
+                from langchain_community.utilities import WikipediaAPIWrapper
+                wiki = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=500))
+                wiki_result = wiki.invoke(entity)
+                if wiki_result and "No good Wikipedia Search Result" not in wiki_result:
+                    return f"\n\n[Background Web Context from Wikipedia: {wiki_result}]"
+        except Exception as e:
+            print(f"[Chat] Wikipedia search failed: {e}")
+        return ""
+
+    def _retrieve_sources(self, question: str):
+        import re
+        from indexer import ReelIndexer
+
+        match = re.search(r'instagram\.com/(?:reel|p)/([A-Za-z0-9_-]+)', question)
+        filter_dict = {"shortcode": match.group(1)} if match else None
+
+        indexer = ReelIndexer(self.index_dir)
+        hits = indexer.search_hybrid(question, k=5, where=filter_dict)
+        if not hits:
+            hits = indexer.search(question, k=5)
+
+        seen = set()
+        sources = []
+        context_docs = []
+        for h in hits:
+            meta = h.get("metadata", {})
+            fn = meta.get("filename", "")
+            sc = meta.get("shortcode", "")
+            if fn and fn not in seen:
+                seen.add(fn)
+                sources.append({
+                    "filename":  fn,
+                    "shortcode": sc,
+                    "caption":   meta.get("caption", ""),
+                    "username":  meta.get("username", ""),
+                    "thumbnail": meta.get("thumbnail", ""),
+                    "timestamp": meta.get("timestamp", ""),
+                })
+            context_docs.append(f"Source URL: https://instagram.com/reel/{sc}/\n{h.get('content', '')}")
+
+        context_str = "\n\n---\n\n".join(context_docs)
+        return context_str, sources
+
+    def ask_stream(self, question: str):
+        """Streams AI tokens for the user's question using hybrid retrieval."""
+        try:
+            self._init_models()
+        except Exception as e:
+            if "connection" in str(e).lower() or "refused" in str(e).lower():
+                raise RuntimeError(
+                    "Ollama is not running. Start it with: ollama serve\n"
+                    "Then pull a model: ollama pull llama3.2"
+                )
+            raise
+
+        context_str, sources = self._retrieve_sources(question)
+        yield {"type": "sources", "sources": sources}
+
+        web_context = self._get_web_context(question)
+        prompt_text = PROMPT_TEMPLATE.format(context=context_str, question=question + web_context)
+
+        for chunk in self.llm.stream(prompt_text):
+            yield {"type": "token", "token": chunk}
+
+        yield {"type": "done", "sources": sources}
+
+    def ask_single_reel_stream(self, content: str, question: str):
+        """Streams AI tokens for a single reel."""
+        try:
+            self._init_models()
+        except Exception as e:
+            if "connection" in str(e).lower() or "refused" in str(e).lower():
+                raise RuntimeError(
+                    "Ollama is not running. Start it with: ollama serve\n"
+                    "Then pull a model: ollama pull llama3.2"
+                )
+            raise
+
+        prompt_text = SINGLE_PROMPT_TEMPLATE.format(context=content, question=question)
+        for chunk in self.llm.stream(prompt_text):
+            yield {"type": "token", "token": chunk}
+
+        yield {"type": "done"}
+
     def is_ollama_available(self) -> bool:
         """Quick check if Ollama HTTP API is reachable."""
         import urllib.request

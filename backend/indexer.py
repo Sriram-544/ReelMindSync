@@ -6,8 +6,58 @@ and stores them in a local ChromaDB collection for semantic search.
 """
 
 import json
+import math
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Callable, Optional
+
+
+def _tokenize(text: str) -> list[str]:
+    return [w.lower() for w in re.findall(r"\w+", text) if len(w) > 1]
+
+
+class SimpleBM25:
+    """Lightweight in-memory Okapi BM25 for hybrid search."""
+    def __init__(self, corpus_docs: list[dict], k1: float = 1.5, b: float = 0.75):
+        self.k1 = k1
+        self.b = b
+        self.docs = corpus_docs
+        self.corpus_size = len(corpus_docs)
+        self.tokenized_corpus = [_tokenize(d["text"]) for d in corpus_docs]
+        self.doc_lens = [len(doc) for doc in self.tokenized_corpus]
+        self.avgdl = (sum(self.doc_lens) / self.corpus_size) if self.corpus_size > 0 else 1.0
+
+        self.df = Counter()
+        for doc in self.tokenized_corpus:
+            for term in set(doc):
+                self.df[term] += 1
+
+        self.idf = {}
+        for term, freq in self.df.items():
+            self.idf[term] = math.log(1 + (self.corpus_size - freq + 0.5) / (freq + 0.5))
+
+    def score(self, query: str) -> list[tuple[float, dict]]:
+        query_terms = _tokenize(query)
+        if not query_terms or self.corpus_size == 0:
+            return []
+
+        scores = [0.0] * self.corpus_size
+        for term in query_terms:
+            if term not in self.idf:
+                continue
+            idf_val = self.idf[term]
+            for idx, doc in enumerate(self.tokenized_corpus):
+                count = doc.count(term)
+                if count == 0:
+                    continue
+                num = count * (self.k1 + 1)
+                den = count + self.k1 * (1 - self.b + self.b * (self.doc_lens[idx] / self.avgdl))
+                scores[idx] += idf_val * (num / den)
+
+        results = [(scores[i], self.docs[i]) for i in range(self.corpus_size) if scores[i] > 0]
+        results.sort(key=lambda x: x[0], reverse=True)
+        return results
 
 
 class ReelIndexer:
@@ -217,6 +267,112 @@ class ReelIndexer:
                 "score":     round(1 - dist, 4),  # cosine similarity
             })
         return hits
+
+    # ── Hybrid search (BM25 + Semantic ChromaDB) ──────────────────────────────
+    def search_hybrid(self, query: str, k: int = 5, where: Optional[dict] = None) -> list[dict]:
+        """
+        Hybrid search combining BM25 keyword matching and ChromaDB dense embeddings
+        using Reciprocal Rank Fusion (RRF).
+        """
+        total_count = self.count()
+        if total_count == 0:
+            return []
+
+        col = self._get_collection()
+        fetch_limit = min(max(k * 3, 20), total_count)
+
+        # 1. Dense Semantic Retrieval
+        dense_hits = []
+        try:
+            model = self._get_embed_model()
+            q_emb = model.encode(query).tolist()
+            query_kwargs = {
+                "query_embeddings": [q_emb],
+                "n_results": fetch_limit,
+                "include": ["documents", "metadatas", "distances"],
+            }
+            if where:
+                query_kwargs["where"] = where
+
+            dense_res = col.query(**query_kwargs)
+            if dense_res and dense_res.get("ids") and dense_res["ids"][0]:
+                for doc_id, doc, meta, dist in zip(
+                    dense_res["ids"][0],
+                    dense_res["documents"][0],
+                    dense_res["metadatas"][0],
+                    dense_res["distances"][0],
+                ):
+                    dense_hits.append({
+                        "id": doc_id,
+                        "content": doc,
+                        "metadata": meta,
+                        "score": round(1 - dist, 4),
+                    })
+        except Exception as e:
+            print(f"[HybridSearch] Dense search error: {e}")
+
+        # 2. Sparse / Lexical Retrieval via BM25
+        sparse_hits = []
+        try:
+            get_kwargs = {"include": ["documents", "metadatas"]}
+            if where:
+                get_kwargs["where"] = where
+            all_records = col.get(**get_kwargs)
+            if all_records and all_records.get("ids"):
+                corpus = []
+                for doc_id, doc, meta in zip(
+                    all_records["ids"],
+                    all_records["documents"],
+                    all_records["metadatas"],
+                ):
+                    meta_dict = meta or {}
+                    combined_text = f"{meta_dict.get('caption', '')} {meta_dict.get('username', '')} {doc}"
+                    corpus.append({
+                        "id": doc_id,
+                        "content": doc,
+                        "metadata": meta_dict,
+                        "text": combined_text,
+                    })
+
+                bm25 = SimpleBM25(corpus)
+                bm25_scored = bm25.score(query)
+                for score, item in bm25_scored[:fetch_limit]:
+                    sparse_hits.append({
+                        "id": item["id"],
+                        "content": item["content"],
+                        "metadata": item["metadata"],
+                        "score": score,
+                    })
+        except Exception as e:
+            print(f"[HybridSearch] BM25 search error: {e}")
+
+        # 3. Reciprocal Rank Fusion (RRF)
+        rrf_k = 60
+        fused_scores: dict[str, float] = {}
+        items_map: dict[str, dict] = {}
+
+        for rank, hit in enumerate(dense_hits):
+            doc_id = hit["id"]
+            fused_scores[doc_id] = fused_scores.get(doc_id, 0.0) + (1.0 / (rrf_k + rank + 1))
+            items_map[doc_id] = hit
+
+        for rank, hit in enumerate(sparse_hits):
+            doc_id = hit["id"]
+            fused_scores[doc_id] = fused_scores.get(doc_id, 0.0) + (1.0 / (rrf_k + rank + 1))
+            if doc_id not in items_map:
+                items_map[doc_id] = hit
+
+        sorted_ids = sorted(fused_scores.keys(), key=lambda x: fused_scores[x], reverse=True)
+        final_results = []
+        for doc_id in sorted_ids[:k]:
+            item = items_map[doc_id]
+            final_results.append({
+                "content": item["content"],
+                "metadata": item["metadata"],
+                "score": round(fused_scores[doc_id], 4),
+            })
+
+        return final_results
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

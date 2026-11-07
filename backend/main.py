@@ -313,6 +313,68 @@ async def chat_single(req: ChatSingleRequest):
         raise HTTPException(500, f"Chat error: {e}")
 
 
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """Streams RAG chat tokens in real-time using SSE."""
+    if not req.question.strip():
+        raise HTTPException(400, "Question cannot be empty.")
+
+    def event_stream():
+        try:
+            from chat import ReelChat
+            rc = ReelChat(str(INDEX_DIR))
+            for item in rc.ask_stream(req.question):
+                yield f"data: {json.dumps(item)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.post("/api/chat_single/stream")
+async def chat_single_stream(req: ChatSingleRequest):
+    """Streams single-reel Q&A tokens in real-time using SSE."""
+    if not req.question.strip():
+        raise HTTPException(400, "Question cannot be empty.")
+
+    path = PROCESSED_DIR / f"{req.shortcode}.json"
+    if not path.exists():
+        raise HTTPException(404, "Reel data not found")
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    content = data.get("content", "")
+    if not content:
+        raise HTTPException(400, "Reel has no transcript/content.")
+
+    def event_stream():
+        try:
+            from chat import ReelChat
+            rc = ReelChat(str(INDEX_DIR))
+            for item in rc.ask_single_reel_stream(content, req.question):
+                yield f"data: {json.dumps(item)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 # ── API: Generate ──────────────────────────────────────────────────────────────
 
 _generator = None

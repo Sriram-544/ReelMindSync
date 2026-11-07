@@ -416,6 +416,52 @@ function highlightReel(idx) {
 }
 
 // ── Chat ─────────────────────────────────────────────────────────────────────
+async function streamChatResponse(url, body, onToken, onSources) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.detail || `Server error (${response.status})`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const jsonStr = trimmed.slice(5).trim();
+      if (!jsonStr) continue;
+      try {
+        const payload = JSON.parse(jsonStr);
+        if (payload.type === 'sources' && onSources) {
+          onSources(payload.sources);
+        } else if (payload.type === 'token' && onToken) {
+          onToken(payload.token);
+        } else if (payload.type === 'error') {
+          throw new Error(payload.error);
+        }
+      } catch (e) {
+        if (e.message && !e.message.includes('JSON')) {
+          throw e;
+        }
+      }
+    }
+  }
+}
+
 async function sendMessage() {
   const input = els.chatInput;
   if (!input || state.chatBusy) return;
@@ -438,14 +484,72 @@ async function sendMessage() {
   // Show typing indicator
   const typingId = appendTyping();
 
+  const container = els.chatMessages;
+  const msgEl = document.createElement('div');
+  msgEl.className = 'chat-message';
+  const bubbleId = `bubble-${Date.now()}`;
+  msgEl.innerHTML = `
+    <div class="chat-msg-row">
+      <div class="chat-avatar chat-avatar--ai">🤖</div>
+      <div class="chat-bubble chat-bubble--ai" id="${bubbleId}">
+        <span class="streaming-cursor">▍</span>
+      </div>
+    </div>
+    <div class="sources-placeholder"></div>
+  `;
+
+  let fullAnswer = '';
+  let collectedSources = [];
+  let isElementAttached = false;
+
   try {
-    const result = await api('/api/chat', 'POST', { question });
+    await streamChatResponse(
+      '/api/chat/stream',
+      { question },
+      (token) => {
+        if (!isElementAttached) {
+          removeTyping(typingId);
+          container.appendChild(msgEl);
+          isElementAttached = true;
+        }
+        fullAnswer += token;
+        const bubbleEl = document.getElementById(bubbleId);
+        if (bubbleEl) {
+          bubbleEl.innerHTML = (window.marked ? marked.parse(fullAnswer) : escHtml(fullAnswer).replace(/\n/g, '<br>')) + '<span class="streaming-cursor">▍</span>';
+          container.scrollTop = container.scrollHeight;
+        }
+      },
+      (sources) => {
+        collectedSources = sources || [];
+        highlightSourceReels(collectedSources);
+      }
+    );
+
     removeTyping(typingId);
-    appendMessage('ai', result.answer, result.source_reels || []);
-    highlightSourceReels(result.source_reels || []);
+    if (!isElementAttached) {
+      container.appendChild(msgEl);
+      isElementAttached = true;
+    }
+    const bubbleEl = document.getElementById(bubbleId);
+    if (bubbleEl) {
+      bubbleEl.innerHTML = window.marked ? marked.parse(fullAnswer) : escHtml(fullAnswer).replace(/\n/g, '<br>');
+    }
+    const sourcesEl = msgEl.querySelector('.sources-placeholder');
+    if (sourcesEl && collectedSources.length > 0) {
+      sourcesEl.innerHTML = renderSources(collectedSources);
+    }
+    saveChatHistory();
   } catch (err) {
     removeTyping(typingId);
-    appendErrorMessage(err.message || 'Chat request failed. Is Ollama running?');
+    if (!fullAnswer) {
+      if (isElementAttached) msgEl.remove();
+      appendErrorMessage(err.message || 'Chat request failed. Is Ollama running?');
+    } else {
+      const bubbleEl = document.getElementById(bubbleId);
+      if (bubbleEl) {
+        bubbleEl.innerHTML += `<div class="chat-error-inline" style="color:#ef4444; margin-top:8px; font-size:12px;">⚠️ Stream interrupted: ${escHtml(err.message)}</div>`;
+      }
+    }
   }
 
   state.chatBusy = false;
@@ -688,27 +792,61 @@ async function sendModalMessage() {
   container.appendChild(typingEl);
   container.scrollTop = container.scrollHeight;
 
+  const aiMsg = document.createElement('div');
+  aiMsg.className = 'chat-message chat-message--ai';
+  const modalBubbleId = `modal-bubble-${Date.now()}`;
+  aiMsg.innerHTML = `
+    <div class="chat-avatar chat-avatar--ai">🤖</div>
+    <div class="chat-bubble markdown-body" id="${modalBubbleId}">
+      <span class="streaming-cursor">▍</span>
+    </div>
+  `;
+
+  let fullAnswer = '';
+  let isAttached = false;
+
   try {
-    const result = await api('/api/chat_single', 'POST', { 
-      shortcode: activeModalShortcode, 
-      question 
-    });
-    
+    await streamChatResponse(
+      '/api/chat_single/stream',
+      { shortcode: activeModalShortcode, question },
+      (token) => {
+        if (!isAttached) {
+          document.getElementById(typingId)?.remove();
+          container.appendChild(aiMsg);
+          isAttached = true;
+        }
+        fullAnswer += token;
+        const b = document.getElementById(modalBubbleId);
+        if (b) {
+          b.innerHTML = (window.marked ? marked.parse(fullAnswer) : escHtml(fullAnswer).replace(/\n/g, '<br>')) + '<span class="streaming-cursor">▍</span>';
+          container.scrollTop = container.scrollHeight;
+        }
+      }
+    );
+
     document.getElementById(typingId)?.remove();
-    
-    const aiMsg = document.createElement('div');
-    aiMsg.className = 'chat-message chat-message--ai';
-    aiMsg.innerHTML = `
-      <div class="chat-avatar chat-avatar--ai">🤖</div>
-      <div class="chat-bubble markdown-body">${marked.parse(result.answer)}</div>
-    `;
-    container.appendChild(aiMsg);
+    if (!isAttached) {
+      container.appendChild(aiMsg);
+      isAttached = true;
+    }
+    const b = document.getElementById(modalBubbleId);
+    if (b) {
+      b.innerHTML = window.marked ? marked.parse(fullAnswer) : escHtml(fullAnswer).replace(/\n/g, '<br>');
+    }
   } catch (err) {
     document.getElementById(typingId)?.remove();
-    const errEl = document.createElement('div');
-    errEl.className = 'chat-error-msg';
-    errEl.textContent = `⚠ ${err.message}`;
-    container.appendChild(errEl);
+    if (!fullAnswer) {
+      if (isAttached) aiMsg.remove();
+      const errEl = document.createElement('div');
+      errEl.className = 'chat-error-msg';
+      errEl.textContent = `⚠ ${err.message}`;
+      container.appendChild(errEl);
+    } else {
+      const b = document.getElementById(modalBubbleId);
+      if (b) {
+        b.innerHTML += `<div class="chat-error-inline" style="color:#ef4444; margin-top:8px; font-size:12px;">⚠️ Stream interrupted: ${escHtml(err.message)}</div>`;
+      }
+    }
   } finally {
     modalChatBusy = false;
     if (btn) btn.disabled = false;
