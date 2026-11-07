@@ -50,11 +50,42 @@
     return batch;
   }
 
+  function triggerScroll() {
+    // 1. Scroll the last reel anchor into view
+    var anchors = document.querySelectorAll('a[href^="/reel/"], a[href^="/p/"]');
+    if (anchors.length > 0) {
+      try {
+        anchors[anchors.length - 1].scrollIntoView({ behavior: 'smooth', block: 'end' });
+      } catch (e) {}
+    }
+
+    // 2. Scroll window, document and main containers
+    window.scrollBy({ top: 1500, behavior: 'smooth' });
+    if (document.scrollingElement) {
+      document.scrollingElement.scrollTop += 1500;
+    }
+    if (document.documentElement) {
+      document.documentElement.scrollTop += 1500;
+    }
+    if (document.body) {
+      document.body.scrollTop += 1500;
+    }
+
+    var mainEl = document.querySelector('main') || document.querySelector('[role="main"]');
+    if (mainEl) {
+      mainEl.scrollTop += 1500;
+    }
+
+    // 3. Dispatch scroll events so Instagram's infinite scroll listener fires
+    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+  }
+
   async function autoScrollAndSync() {
     var allReels = [];
     var seen = {};
     var rounds = 0;
-    var maxRounds = 12;
+    var maxRounds = 15;
     var idleCount = 0;
 
     showToast("Collecting reels (Auto-scrolling)...", "info");
@@ -73,8 +104,8 @@
         idleCount = 0;
       }
 
-      window.scrollBy({ top: 1200, behavior: 'smooth' });
-      await new Promise(function(resolve) { setTimeout(resolve, 1100); });
+      triggerScroll();
+      await new Promise(function(resolve) { setTimeout(resolve, 1500); });
     }
 
     if (allReels.length === 0) {

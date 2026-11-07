@@ -122,8 +122,22 @@ async function scrapeReelsWithScroll() {
     } else {
       idleCount = 0;
     }
-    window.scrollBy({ top: 1200, behavior: 'smooth' });
-    await new Promise(function(resolve) { setTimeout(resolve, 900); });
+
+    // Scroll last anchor and multi-containers
+    var lastAnchor = anchors.length > 0 ? anchors[anchors.length - 1] : null;
+    if (lastAnchor) {
+      try { lastAnchor.scrollIntoView({ behavior: 'smooth', block: 'end' }); } catch (e) {}
+    }
+    window.scrollBy({ top: 1500, behavior: 'smooth' });
+    if (document.scrollingElement) { document.scrollingElement.scrollTop += 1500; }
+    if (document.documentElement) { document.documentElement.scrollTop += 1500; }
+    if (document.body) { document.body.scrollTop += 1500; }
+    var mainEl = document.querySelector('main') || document.querySelector('[role="main"]');
+    if (mainEl) { mainEl.scrollTop += 1500; }
+    window.dispatchEvent(new Event('scroll', { bubbles: true }));
+    document.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+    await new Promise(function(resolve) { setTimeout(resolve, 1400); });
   }
 
   return allReels;
