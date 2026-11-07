@@ -262,6 +262,16 @@ async def get_reel(shortcode: str):
 
 
 # ── API: Chat ──────────────────────────────────────────────────────────────────
+_chat_instance = None
+
+def _get_chat():
+    global _chat_instance
+    if _chat_instance is None:
+        from chat import ReelChat
+        _chat_instance = ReelChat(str(INDEX_DIR))
+    return _chat_instance
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     """Runs a RAG query against the indexed reel collection."""
@@ -278,8 +288,7 @@ async def chat(req: ChatRequest):
         pass
 
     try:
-        from chat import ReelChat
-        result = ReelChat(str(INDEX_DIR)).ask(req.question)
+        result = _get_chat().ask(req.question)
         return result
     except RuntimeError as e:
         raise HTTPException(503, str(e))
@@ -304,8 +313,7 @@ async def chat_single(req: ChatSingleRequest):
         if not content:
             raise HTTPException(400, "Reel has no transcript/content.")
             
-        from chat import ReelChat
-        result = ReelChat(str(INDEX_DIR)).ask_single_reel(content, req.question)
+        result = _get_chat().ask_single_reel(content, req.question)
         return result
     except RuntimeError as e:
         raise HTTPException(503, str(e))
@@ -321,8 +329,7 @@ async def chat_stream(req: ChatRequest):
 
     def event_stream():
         try:
-            from chat import ReelChat
-            rc = ReelChat(str(INDEX_DIR))
+            rc = _get_chat()
             for item in rc.ask_stream(req.question):
                 yield f"data: {json.dumps(item)}\n\n"
         except Exception as e:
@@ -357,8 +364,7 @@ async def chat_single_stream(req: ChatSingleRequest):
 
     def event_stream():
         try:
-            from chat import ReelChat
-            rc = ReelChat(str(INDEX_DIR))
+            rc = _get_chat()
             for item in rc.ask_single_reel_stream(content, req.question):
                 yield f"data: {json.dumps(item)}\n\n"
         except Exception as e:

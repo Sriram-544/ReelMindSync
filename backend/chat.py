@@ -82,13 +82,22 @@ class ReelChat:
     def ask(self, question: str) -> dict:
         """
         Ask a question about the reel collection.
-
-        Returns:
-            {
-                "answer": str,
-                "source_reels": [{"filename": str, "caption": str, "username": str, "thumbnail": str}]
-            }
         """
+        q_clean = question.strip().lower().rstrip("!.,?")
+        greetings = {"hi", "hello", "hey", "hola", "sup", "what's up", "good morning", "good evening", "good afternoon", "hi there", "hello there"}
+        if q_clean in greetings:
+            return {
+                "answer": (
+                    "Hello! 👋 I'm **ReelMind**, your local AI assistant for your saved Instagram Reels.\n\n"
+                    "I can search through your indexed reels, extract recipes, explain concepts, and find specific creators. Try asking:\n"
+                    "- 🍳 *\"Find recipes or cooking reels\"*\n"
+                    "- 🏋️ *\"Show me gym or workout tips\"*\n"
+                    "- 💻 *\"What tech or coding reels do I have?\"*\n\n"
+                    "How can I help you today?"
+                ),
+                "source_reels": []
+            }
+
         import re
         from langchain_classic.chains import RetrievalQA
         from langchain_core.prompts import PromptTemplate
@@ -282,6 +291,23 @@ class ReelChat:
 
     def ask_stream(self, question: str):
         """Streams AI tokens for the user's question using hybrid retrieval."""
+        q_clean = question.strip().lower().rstrip("!.,?")
+        greetings = {"hi", "hello", "hey", "hola", "sup", "what's up", "good morning", "good evening", "good afternoon", "hi there", "hello there"}
+        if q_clean in greetings:
+            yield {"type": "sources", "sources": []}
+            greeting_msg = (
+                "Hello! 👋 I'm **ReelMind**, your local AI assistant for your saved Instagram Reels.\n\n"
+                "I can search through your indexed reels, extract recipes, explain concepts, and find specific creators. Try asking:\n"
+                "- 🍳 *\"Find recipes or cooking reels\"*\n"
+                "- 🏋️ *\"Show me gym or workout tips\"*\n"
+                "- 💻 *\"What tech or coding reels do I have?\"*\n\n"
+                "How can I help you today?"
+            )
+            for word in greeting_msg.split(" "):
+                yield {"type": "token", "token": word + " "}
+            yield {"type": "done", "sources": []}
+            return
+
         try:
             self._init_models()
         except Exception as e:
@@ -295,8 +321,7 @@ class ReelChat:
         context_str, sources = self._retrieve_sources(question)
         yield {"type": "sources", "sources": sources}
 
-        web_context = self._get_web_context(question)
-        prompt_text = PROMPT_TEMPLATE.format(context=context_str, question=question + web_context)
+        prompt_text = PROMPT_TEMPLATE.format(context=context_str, question=question)
 
         for chunk in self.llm.stream(prompt_text):
             yield {"type": "token", "token": chunk}
