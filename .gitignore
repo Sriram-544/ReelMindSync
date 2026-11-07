@@ -1,0 +1,36 @@
+# Virtual Environment
+venv/
+env/
+.env
+*.env
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# ReelMind Runtime & Data Files (Downloaded videos, OCR/transcripts, vectors, thumbnails)
+backend/data/reels/*
+backend/data/processed/*
+backend/data/reel_index/*
+backend/data/thumbs/*
+backend/data/generated/*
+!backend/data/reels/.gitkeep
+!backend/data/processed/.gitkeep
+!backend/data/reel_index/.gitkeep
+!backend/data/thumbs/.gitkeep
+!backend/data/generated/.gitkeep
+
+# macOS metadata
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo

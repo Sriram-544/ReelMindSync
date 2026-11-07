@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { width: 300px; font-family: 'Inter', sans-serif; padding: 15px; margin: 0; background: #080b14; color: #f1f5f9; }
+      h3 { margin-top: 0; background: linear-gradient(135deg, #8b5cf6, #ec4899); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+      p { font-size: 13px; color: #94a3b8; }
+      button { width: 100%; padding: 10px; background: linear-gradient(135deg, #8b5cf6, #ec4899); border: none; border-radius: 8px; color: white; font-weight: bold; cursor: pointer; }
+      button:hover { opacity: 0.9; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      #status { margin-top: 10px; font-size: 12px; text-align: center; color: #22c55e; }
+      .error { color: #ef4444 !important; }
+    </style>
+  </head>
+  <body>
+    <h3>🎬 ReelMind Sync</h3>
+    <p>Go to your Instagram Saved page, then click the button below to extract reels and send them to your local app.</p>
+    <button id="sync-btn">Sync Saved Reels</button>
+    <div id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

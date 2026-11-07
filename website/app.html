@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="ReelMind — Search and chat with your saved Instagram Reels using local AI." />
+  <title>ReelMind App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/app.css?v=4" />
+</head>
+<body>
+
+  <!-- Animated background -->
+  <div class="bg-orbs" aria-hidden="true">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+  </div>
+
+  <!-- ========================================================
+       APP SHELL
+  ======================================================== -->
+  <div id="app">
+
+    <!-- Top nav -->
+    <nav class="app-nav">
+      <a href="/" class="nav-brand">
+        <span class="logo-icon">🎬</span> ReelMind
+      </a>
+      <div class="nav-breadcrumb">
+        <span class="sep">/</span>
+        <span class="current" id="breadcrumb-current">Connect</span>
+      </div>
+      <div class="nav-spacer"></div>
+      <div class="nav-status">
+        <span class="nav-status-dot" id="nav-status-dot"></span>
+        <span id="nav-status-text">Checking…</span>
+      </div>
+      <button class="btn-sm btn-sm--ghost" id="btn-back-connect" style="display:none">← Back</button>
+      <button class="btn-sm btn-sm--ghost" id="btn-back-dashboard" style="display:none">← Dashboard</button>
+      <button class="btn-sm btn-sm--primary" id="btn-nav-chat" style="display:none">Chat →</button>
+      <button class="btn-sm btn-sm--ghost" id="btn-nav-generate" style="display:none">Generate ✨</button>
+    </nav>
+
+    <!-- ======================================================
+         VIEW 1: CONNECT
+    ====================================================== -->
+    <section class="view active" id="view-connect">
+      <div class="connect-card">
+
+        <div class="connect-header">
+          <div class="connect-icon">🧩</div>
+          <h1 class="connect-title">Install the Chrome Extension</h1>
+          <p class="connect-subtitle">
+            To bypass Instagram's strict rate limits, ReelMind uses a simple Chrome extension to sync your saved reels directly from your browser.
+          </p>
+        </div>
+
+        <div class="extension-instructions">
+          <ol style="color: #cbd5e1; font-size: 14px; line-height: 1.6; padding-left: 20px;">
+            <li>Open Chrome and navigate to <code>chrome://extensions/</code></li>
+            <li>Turn on <strong>Developer Mode</strong> (top right)</li>
+            <li>Click <strong>Load unpacked</strong> and select the <code>extension</code> folder in the ReelMind directory</li>
+            <li>Go to <a href="https://www.instagram.com/saved/" target="_blank" style="color: #ec4899;">Instagram Saved Reels</a> in your browser</li>
+            <li>Click the ReelMind extension icon and click "Sync"</li>
+          </ol>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center; color: #94a3b8; font-size: 14px;">
+          <p id="waiting-text">⏳ Waiting for extension to sync...</p>
+        </div>
+
+        <!-- Show if reels already indexed from a previous session -->
+        <div class="connect-already" id="already-section" style="display:none; margin-top: 20px;">
+          <p class="connect-already-text">
+            You already have <strong id="already-count">0</strong> reels indexed from a previous session.
+          </p>
+          <button class="btn-already" id="btn-already">
+            ✓ Skip to Dashboard →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================
+         VIEW 2: DASHBOARD
+    ====================================================== -->
+    <section class="view" id="view-dashboard">
+
+      <div class="dashboard-layout">
+
+        <!-- Pipeline status panel -->
+        <div class="pipeline-panel">
+          <div class="panel-title">
+            <span>⚡</span> Pipeline Status
+          </div>
+
+          <div class="phase-list">
+
+            <!-- Phase 1: Models -->
+            <div class="phase-item pending" id="phase-item-1">
+              <div class="phase-icon pending">🧠</div>
+              <div class="phase-body">
+                <div class="phase-name">Preparing AI Models</div>
+                <div class="phase-bar-wrap">
+                  <div class="phase-bar" id="phase-bar-1"></div>
+                </div>
+                <div class="phase-msg" id="phase-msg-1">Waiting…</div>
+              </div>
+            </div>
+
+            <!-- Phase 2: Processing -->
+            <div class="phase-item pending" id="phase-item-2">
+              <div class="phase-icon pending">🔄</div>
+              <div class="phase-body">
+                <div class="phase-name">Processing Reels</div>
+                <div class="phase-bar-wrap">
+                  <div class="phase-bar" id="phase-bar-2"></div>
+                </div>
+                <div class="phase-msg" id="phase-msg-2">Waiting…</div>
+              </div>
+            </div>
+
+            <!-- Phase 3: Ready -->
+            <div class="phase-item pending" id="phase-item-3">
+              <div class="phase-icon pending">💬</div>
+              <div class="phase-body">
+                <div class="phase-name">Ready to Chat</div>
+                <div class="phase-bar-wrap">
+                  <div class="phase-bar" id="phase-bar-3"></div>
+                </div>
+                <div class="phase-msg" id="phase-msg-3">Waiting…</div>
+              </div>
+            </div>
+
+          </div><!-- /phase-list -->
+
+          <!-- Overall progress -->
+          <div class="pipeline-overall">
+            <div class="pipeline-overall-label">
+              <span id="pipeline-msg">Starting…</span>
+              <span id="overall-pct">0%</span>
+            </div>
+            <div class="pipeline-overall-bar-wrap">
+              <div class="pipeline-overall-bar" id="overall-bar"></div>
+            </div>
+          </div>
+
+          <div class="pipeline-action-row">
+            <button id="btn-start-chat" disabled>
+              💬 Open Chat Interface
+            </button>
+          </div>
+        </div><!-- /pipeline-panel -->
+
+        <!-- Reel grid -->
+        <div class="reel-grid-panel">
+          <div class="reel-grid-header">
+            <h2 class="reel-grid-title">Your Indexed Reels</h2>
+            <span class="reel-count-badge" id="reel-count-badge">0 reels</span>
+          </div>
+
+          <div class="reel-grid" id="reel-grid">
+            <div class="grid-empty">
+              <div class="empty-icon">🎬</div>
+              <div>Reels will appear here as they are indexed…</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ======================================================
+         VIEW 3: CHAT
+    ====================================================== -->
+    <section class="view" id="view-chat">
+
+      <!-- Sidebar: reel list -->
+      <aside class="chat-sidebar">
+        <div class="sidebar-header">
+          <span>Your Reels</span>
+        </div>
+        <div class="sidebar-reel-list" id="sidebar-reel-list">
+          <!-- Populated by JS -->
+        </div>
+      </aside>
+
+      <!-- Main chat area -->
+      <div class="chat-main">
+
+        <!-- Ollama offline warning -->
+        <div class="ollama-warning hidden" id="ollama-warning">
+          <span>⚠️</span>
+          <div>
+            Ollama is not running — chat answers won't work.
+            Start it with <code>ollama serve</code> and pull a model with
+            <code>ollama pull llama3.2</code>, then reload this page.
+          </div>
+        </div>
+
+        <!-- Messages area -->
+        <div class="chat-messages" id="chat-messages">
+          <!-- Welcome / suggestions -->
+          <div class="chat-welcome" id="chat-welcome">
+            <div class="chat-welcome-icon">🎬</div>
+            <div class="chat-welcome-title">Ask anything about your Reels</div>
+            <p class="chat-welcome-sub">
+              ReelMind searches through captions, speech, and on-screen text
+              to find exactly what you're looking for.
+            </p>
+            <div class="chat-suggestions">
+              <button class="chat-suggestion" data-q="Find the reel about cooking or food">
+                🍳 Find reels about cooking or food
+              </button>
+              <button class="chat-suggestion" data-q="Show me any travel or travel tips reels">
+                ✈️ Show me travel reels
+              </button>
+              <button class="chat-suggestion" data-q="What productivity tips are in my reels?">
+                📈 What productivity tips do I have saved?
+              </button>
+              <button class="chat-suggestion" data-q="Find reels with music or guitar">
+                🎸 Find reels with music
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Input bar -->
+        <div class="chat-input-bar">
+          <div class="chat-input-wrap">
+            <textarea
+              id="chat-input"
+              placeholder="Ask about your reels… (Enter to send, Shift+Enter for new line)"
+              rows="1"
+            ></textarea>
+          </div>
+          <button class="btn-send" id="btn-send" aria-label="Send message">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </div>
+
+      </div><!-- /chat-main -->
+    </section>
+    <!-- ======================================================
+         VIEW 4: GENERATE
+    ====================================================== -->
+    <section class="view" id="view-generate">
+      <div class="generate-layout">
+
+        <!-- Left: Input panel -->
+        <div class="generate-input-panel">
+          <h2 class="generate-title">Generate Images & Video</h2>
+          <p class="generate-subtitle">Runs entirely on your local GPU (Apple M4 / MPS).</p>
+
+          <div class="generate-mode-tabs">
+            <button class="gen-tab active" data-mode="image">Image</button>
+            <button class="gen-tab" data-mode="video">Video (GIF)</button>
+          </div>
+
+          <div class="generate-provider-tabs">
+            <button class="gen-tab active" data-provider="local">Local GPU</button>
+            <button class="gen-tab" data-provider="cloud">Cloud (Free)</button>
+          </div>
+
+          <div class="form-group gen-cloud-info" style="display:none;">
+            <p style="font-size:0.8rem;color:var(--text-secondary);background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.2);border-radius:10px;padding:10px 14px;margin:0;">
+              Powered by <strong>Pollinations.ai</strong> — free, no API key needed. Uses Flux model for high-quality 1024x1024 images.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Prompt</label>
+            <textarea id="gen-prompt" class="gen-textarea" placeholder="Describe what you want to generate…" rows="3"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Negative Prompt (what to avoid)</label>
+            <input id="gen-neg-prompt" class="form-input" placeholder="e.g. blurry, low quality, distorted" />
+          </div>
+
+          <div class="gen-advanced" id="gen-advanced" style="display:none;">
+            <div class="gen-row">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Steps</label>
+                <input id="gen-steps" class="form-input" type="number" min="1" max="50" value="25" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Width</label>
+                <input id="gen-width" class="form-input" type="number" min="256" max="1024" step="64" value="512" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Height</label>
+                <input id="gen-height" class="form-input" type="number" min="256" max="1024" step="64" value="512" />
+              </div>
+              <div class="form-group gen-frames-group" style="flex:1; display:none;">
+                <label class="form-label">Frames</label>
+                <input id="gen-frames" class="form-input" type="number" min="8" max="32" value="16" />
+              </div>
+            </div>
+          </div>
+
+          <button type="button" class="gen-advanced-toggle" id="gen-adv-toggle">
+            Advanced settings ▸
+          </button>
+
+          <button class="btn-connect" id="btn-generate">
+            Generate
+          </button>
+
+          <div class="gen-info">
+            <p class="gen-info-text">First generation loads the model (~30s). Subsequent generations are faster (~10-20s for images, 1-2 min for video).</p>
+          </div>
+        </div>
+
+        <!-- Right: Results gallery -->
+        <div class="generate-results-panel">
+          <div class="gen-results-header">
+            <h3>Generated</h3>
+            <span class="gen-count" id="gen-count">0</span>
+          </div>
+          <div class="gen-results-grid" id="gen-results-grid">
+            <div class="grid-empty">
+              <div class="empty-icon">✨</div>
+              <div>Generated images and videos will appear here…</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+    <!-- ======================================================
+         MODAL: GENERATED MEDIA PREVIEW
+    ====================================================== -->
+    <dialog id="gen-preview-modal" class="gen-preview-modal">
+      <div class="gen-preview-content">
+        <button class="gen-preview-close" id="gen-preview-close">&times;</button>
+        <div class="gen-preview-media" id="gen-preview-media"></div>
+        <div class="gen-preview-prompt" id="gen-preview-prompt"></div>
+        <div class="gen-preview-actions">
+          <a class="btn-sm btn-sm--primary" id="gen-preview-download" download href="#">Download</a>
+          <button class="btn-sm btn-sm--ghost" id="gen-preview-close-btn">Close</button>
+        </div>
+      </div>
+    </dialog>
+    <!-- ======================================================
+         MODAL: SINGLE REEL CHAT
+    ====================================================== -->
+    <dialog id="reel-modal" class="reel-modal">
+      <div class="modal-content">
+        <button class="modal-close" id="modal-close" aria-label="Close modal">×</button>
+        
+        <div class="modal-body">
+          <!-- Left Col: Video + Transcript -->
+          <div class="modal-left">
+            <div class="modal-video-wrap">
+              <video id="modal-video" controls autoplay loop playsinline></video>
+            </div>
+            
+            <div class="modal-text-wrap">
+              <div class="modal-text-header">
+                <h3>AI Extracted Context</h3>
+                <a href="#" id="modal-ig-link" target="_blank" rel="noopener noreferrer">
+                  Open on Instagram ↗
+                </a>
+              </div>
+              <div class="modal-transcript" id="modal-transcript">
+                <!-- Transcript populated by JS -->
+              </div>
+            </div>
+          </div>
+          
+          <!-- Right Col: Single Reel Chat -->
+          <div class="modal-right">
+            <div class="modal-chat-header">
+              <h3>Chat with this Reel</h3>
+              <p>Ask anything about the recipe, people, or text shown in this video.</p>
+            </div>
+            
+            <div class="chat-messages" id="modal-chat-messages">
+              <!-- Chat messages go here -->
+            </div>
+            
+            <div class="chat-input-bar">
+              <div class="chat-input-wrap">
+                <textarea
+                  id="modal-chat-input"
+                  placeholder="Ask about this reel…"
+                  rows="1"
+                ></textarea>
+              </div>
+              <button class="btn-send" id="btn-modal-send" aria-label="Send message">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2.5"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"/>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </dialog>
+
+  </div><!-- /#app -->
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/app-ui.js?v=6"></script>
+</body>
+</html>
