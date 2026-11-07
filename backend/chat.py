@@ -10,23 +10,21 @@ Uses LangChain to orchestrate:
 from pathlib import Path
 
 
-PROMPT_TEMPLATE = """You are ReelMind, an AI assistant that helps users find and understand their saved Instagram Reels.
+PROMPT_TEMPLATE = """You are ReelMind, an AI assistant that helps users search and understand their saved Instagram Reels.
 
-Below is content extracted from the most relevant Reels in the user's collection (captions, spoken words, and on-screen text):
-
+Below is verified content extracted from the user's reels (captions, spoken audio transcripts, and on-screen text):
+---
 {context}
+---
 
 User Question: {question}
 
 Instructions:
-- Use the provided reel context to answer the user's question.
-- The user's question may include additional background web context that was retrieved from Wikipedia to help you understand entities or correct spelling mistakes. Use this web context to make sense of the Reels if they contain typos (e.g., "Kaamad" instead of "Kamath").
-- Be conversational and specific — mention what was said, shown, or captioned.
-- ALWAYS use rich Markdown formatting to make your response appealing and easy to read. Use headings (###), bullet points (-), bold text (**), and numbered lists to break up large blocks of text.
-- Never return large walls of unformatted text. Structure your response point-wise so it is easy to scan.
-- If multiple reels are relevant, mention each one.
-- If the answer isn't in the context, say so honestly.
-- At the end, always list the exact Instagram URL for the source reels (e.g. https://instagram.com/reel/SHORTCODE).
+- Base your answer ONLY on the provided reel context above.
+- If the requested information is not in the context, state honestly: "I could not find that in your indexed reels."
+- NEVER invent, assume, or hallucinate facts, places, or videos not present in the context.
+- Be structured and concise — use Markdown headings (###), bullet points (-), and bold text (**).
+- At the end, cite the matching Instagram URLs from the context. NEVER output dummy placeholders like "SHORTCODE".
 
 Answer:"""
 
@@ -102,103 +100,47 @@ class ReelChat:
         from langchain_classic.chains import RetrievalQA
         from langchain_core.prompts import PromptTemplate
 
+        context_str, sources, requested_sc, found = self._retrieve_sources(question)
+        if requested_sc and not found:
+            return {
+                "answer": (
+                    f"### ⚠️ Reel Not Found in Local Library\n\n"
+                    f"The reel **`https://www.instagram.com/p/{requested_sc}/`** has not been downloaded or indexed on your computer yet.\n\n"
+                    f"**Why did this happen?**\n"
+                    f"- This link was added to your queue, but Instagram's server blocked the video download (`rate-limit reached or login required`).\n"
+                    f"- Because the video (`.mp4`) could not be downloaded, transcription and indexing were skipped for this specific reel.\n\n"
+                    f"**What you can do:**\n"
+                    f"- You can ask questions about any of your **196 already-indexed reels** in your collection!\n"
+                    f"- To add this reel, download its `.mp4` file and place it in `ReelMind/backend/data/reels/{requested_sc}.mp4`."
+                ),
+                "source_reels": []
+            }
+
         try:
             self._init_models()
         except Exception as e:
             if "connection" in str(e).lower() or "refused" in str(e).lower():
                 raise RuntimeError(
                     "Ollama is not running. Start it with: ollama serve\n"
-                    "Then pull a model: ollama pull qwen2.5:7b"
+                    "Then pull a model: ollama pull llama3.2"
                 )
             raise
-
-        # Check for URL filter in the user's question
-        match = re.search(r'instagram\.com/(?:reel|p)/([A-Za-z0-9_-]+)', question)
-        filter_shortcode = match.group(1) if match else None
-
-        search_kwargs = {"k": 5}
-        if filter_shortcode:
-            search_kwargs["filter"] = {"shortcode": filter_shortcode}
-
-        retriever = self.vector_store.as_retriever(
-            search_type="similarity",
-            search_kwargs=search_kwargs,
-        )
 
         prompt = PromptTemplate(
             template=PROMPT_TEMPLATE,
             input_variables=["context", "question"],
         )
 
-        document_prompt = PromptTemplate(
-            template="Source URL: https://instagram.com/reel/{shortcode}/\n{page_content}",
-            input_variables=["page_content", "shortcode"],
-        )
-
-        chain = RetrievalQA.from_chain_type(
-            llm=self.llm,
-            chain_type="stuff",
-            retriever=retriever,
-            return_source_documents=True,
-            chain_type_kwargs={
-                "prompt": prompt,
-                "document_prompt": document_prompt
-            },
-        )
-
-        # Perform quick Wikipedia search to augment context
-        web_context = ""
-        try:
-            # 1. Use Ollama to extract the core entity to search
-            extraction_prompt = (
-                "Extract the main entity name (person, company, place) to search Wikipedia. "
-                "Return ONLY the exact entity name, nothing else. If there is no entity, return 'NONE'.\n"
-                f"Query: {question}"
-            )
-            entity = self.llm.invoke(extraction_prompt).strip()
-
-            # 2. Only search if we found a valid entity
-            if entity and entity.upper() != "NONE":
-                from langchain_community.tools import WikipediaQueryRun
-                from langchain_community.utilities import WikipediaAPIWrapper
-                wiki = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=500))
-                wiki_result = wiki.invoke(entity)
-                
-                # If Wikipedia finds a match, append it to the query
-                if wiki_result and "No good Wikipedia Search Result" not in wiki_result:
-                    web_context = f"\n\n[Background Web Context from Wikipedia (Use this to understand context/typos): {wiki_result}]"
-        except Exception as e:
-            print(f"[Chat] Wikipedia search failed: {e}")
+        chain = prompt | self.llm
 
         try:
-            result = chain.invoke({"query": question + web_context})
+            answer = chain.invoke({"context": context_str, "question": question})
+            return {
+                "answer": answer.strip(),
+                "source_reels": sources,
+            }
         except Exception as e:
             raise RuntimeError(f"Chat failed: {e}")
-
-        answer = result.get("result", "").strip()
-        source_docs = result.get("source_documents", [])
-
-        # Deduplicate sources preserving order
-        seen = set()
-        sources = []
-        for doc in source_docs:
-            meta = doc.metadata
-            fn = meta.get("filename", "")
-            if fn and fn not in seen:
-                seen.add(fn)
-                sources.append({
-                    "filename":  fn,
-                    "shortcode": meta.get("shortcode", ""),
-                    "caption":   meta.get("caption", ""),
-                    "username":  meta.get("username", ""),
-                    "thumbnail": meta.get("thumbnail", ""),
-                    "timestamp": meta.get("timestamp", ""),
-                })
-
-        return {
-            "answer":       answer,
-            "source_reels": sources,
-        }
 
     def ask_single_reel(self, content: str, question: str) -> dict:
         """
@@ -256,14 +198,57 @@ class ReelChat:
         return ""
 
     def _retrieve_sources(self, question: str):
+        import json
         import re
         from indexer import ReelIndexer
 
         match = re.search(r'instagram\.com/(?:reel|p)/([A-Za-z0-9_-]+)', question)
-        filter_dict = {"shortcode": match.group(1)} if match else None
+        requested_sc = match.group(1) if match else None
 
+        # If a specific shortcode/URL was requested:
+        if requested_sc:
+            # 1. Check if processed json file exists on disk
+            processed_file = Path(self.index_dir).parent / "processed" / f"{requested_sc}.json"
+            if processed_file.exists():
+                try:
+                    with open(processed_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    sources = [{
+                        "filename": data.get("filename", f"{requested_sc}.mp4"),
+                        "shortcode": requested_sc,
+                        "caption": data.get("caption", ""),
+                        "username": data.get("username", ""),
+                        "thumbnail": data.get("thumbnail", f"{requested_sc}.jpg"),
+                        "timestamp": str(data.get("timestamp", "")),
+                    }]
+                    context_str = f"Source URL: https://instagram.com/reel/{requested_sc}/\n{data.get('content', '')}"
+                    return context_str, sources, requested_sc, True
+                except Exception as e:
+                    print(f"[Chat] Error reading processed json: {e}")
+
+            # 2. Check in index
+            indexer = ReelIndexer(self.index_dir)
+            hits = indexer.search_hybrid(question, k=1, where={"shortcode": requested_sc})
+            if hits:
+                h = hits[0]
+                meta = h.get("metadata", {})
+                sources = [{
+                    "filename": meta.get("filename", f"{requested_sc}.mp4"),
+                    "shortcode": requested_sc,
+                    "caption": meta.get("caption", ""),
+                    "username": meta.get("username", ""),
+                    "thumbnail": meta.get("thumbnail", ""),
+                    "timestamp": meta.get("timestamp", ""),
+                }]
+                context_str = f"Source URL: https://instagram.com/reel/{requested_sc}/\n{h.get('content', '')}"
+                return context_str, sources, requested_sc, True
+
+            # If specific shortcode was requested but NOT found, NEVER fallback to unrelated random reels!
+            return "", [], requested_sc, False
+
+        # Regular hybrid search across all reels
         indexer = ReelIndexer(self.index_dir)
-        hits = indexer.search_hybrid(question, k=5, where=filter_dict)
+        hits = indexer.search_hybrid(question, k=5)
         if not hits:
             hits = indexer.search(question, k=5)
 
@@ -287,7 +272,7 @@ class ReelChat:
             context_docs.append(f"Source URL: https://instagram.com/reel/{sc}/\n{h.get('content', '')}")
 
         context_str = "\n\n---\n\n".join(context_docs)
-        return context_str, sources
+        return context_str, sources, None, True
 
     def ask_stream(self, question: str):
         """Streams AI tokens for the user's question using hybrid retrieval."""
@@ -308,6 +293,26 @@ class ReelChat:
             yield {"type": "done", "sources": []}
             return
 
+        context_str, sources, requested_sc, found = self._retrieve_sources(question)
+
+        # If user asked about a specific link that isn't indexed yet:
+        if requested_sc and not found:
+            yield {"type": "sources", "sources": []}
+            not_found_msg = (
+                f"### ⚠️ Reel Not Found in Local Library\n\n"
+                f"The reel **`https://www.instagram.com/p/{requested_sc}/`** has not been downloaded or indexed on your computer yet.\n\n"
+                f"**Why did this happen?**\n"
+                f"- This link was added to your queue, but Instagram's server blocked the video download (`rate-limit reached or login required`).\n"
+                f"- Because the video (`.mp4`) could not be downloaded, transcription and indexing were skipped for this specific reel.\n\n"
+                f"**What you can do:**\n"
+                f"- You can ask questions about any of your **196 already-indexed reels** in your collection!\n"
+                f"- To add this reel, download its `.mp4` file and place it in `ReelMind/backend/data/reels/{requested_sc}.mp4`."
+            )
+            for word in not_found_msg.split(" "):
+                yield {"type": "token", "token": word + " "}
+            yield {"type": "done", "sources": []}
+            return
+
         try:
             self._init_models()
         except Exception as e:
@@ -318,7 +323,6 @@ class ReelChat:
                 )
             raise
 
-        context_str, sources = self._retrieve_sources(question)
         yield {"type": "sources", "sources": sources}
 
         prompt_text = PROMPT_TEMPLATE.format(context=context_str, question=question)
