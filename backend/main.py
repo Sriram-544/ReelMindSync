@@ -206,6 +206,23 @@ async def start_pipeline_extension(req: ExtensionStartRequest, background_tasks:
     return {"success": True, "message": f"Started pipeline with {added_count} reels."}
 
 
+@app.post("/api/pipeline/reindex")
+async def trigger_reindex(background_tasks: BackgroundTasks):
+    """Scans and indexes any unprocessed MP4 files into ChromaDB."""
+    def _do_reindex():
+        try:
+            from reel_extractor import ReelExtractor
+            from indexer import ReelIndexer
+            ext = ReelExtractor()
+            ext.process_all(str(REELS_DIR), str(PROCESSED_DIR), thumbs_dir=str(THUMBS_DIR))
+            idx = ReelIndexer(str(INDEX_DIR))
+            idx.index_all(str(PROCESSED_DIR))
+        except Exception as e:
+            print(f"[Reindex] Error: {e}")
+    background_tasks.add_task(_do_reindex)
+    return {"success": True, "message": "Re-indexing started in background."}
+
+
 @app.get("/api/pipeline/status")
 async def pipeline_status():
     """
